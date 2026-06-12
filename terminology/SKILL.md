@@ -1,7 +1,7 @@
 ---
 name: terminology
 description: Read a codebase, find terminology, create/update definitions into a markdown document.
-license: Apache-2.0
+license: MIT
 compatibility: any
 metadata:
   author: Flying Obsidian Ltd
