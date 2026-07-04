@@ -1,13 +1,16 @@
 ---
 name: patterns
 description: |
-  Research patterns and antipatterns for given languages, and apply them to a codebase. Use "help" to list all available subskills.
+  Research patterns and antipatterns for given languages, and apply them to a codebase. Supports repos with multiple languages/frameworks (e.g. Terraform, Terragrunt, and one or more application languages) via one `patterns-<name>.md` file per component. Use "help" to list all available subskills.
 license: MIT
 compatibility: any
 metadata:
   author: Flying Obsidian Ltd
-  version: "1.0"
-allowed-tools: "Bash(git:*) Bash(grep:*) Bash(find:*) Bash(gh:*) Bash(glab:*) AskFollowupQuestion Read WebSearch WebFetch Write"
+  version: "2.0"
+allowed-tools: >-
+  Bash(git:*) Bash(grep:*) Bash(find:*) Bash(gh:*) Bash(glab:*)
+  Bash(mktemp:*) Bash(touch:*) Bash(cat:*) Bash(rm -f /tmp/*)
+  AskFollowupQuestion Read WebSearch WebFetch Write
 ---
 
 # Subskills
@@ -24,84 +27,129 @@ Print the following to the user verbatim:
 
 ```markdown
 - **help** to list subskills.
-- **research-create <language_or_framework>...** to research patterns and create a new `patterns.md`.
-- **research-update** to research patterns and update an existing `patterns.md`.
-- **analyse** to check if the codebase needs improvements to better follow patterns and avoid anti-patterns. Create Issues, or write `patterns-recommendations.md`.
+- **research-create [<language_or_framework>...]** to research patterns for one or more languages/frameworks and create a new `patterns-<name>.md`. Run with no arguments to auto-detect every language/framework component used in the repo (confirming the list with you) and create one patterns file per component.
+- **research-update [<component>...]** to research and update existing `patterns-*.md` file(s). Run with no arguments to update every patterns file found; pass one or more component names to update only matching files.
+- **analyse** to check if the codebase needs improvements to better follow patterns and avoid anti-patterns, across all `patterns-*.md` files found. Create Issues, or write `patterns-recommendations.md`.
 ```
+
+---
+
+## Multi-component model
+
+A repo may contain more than one distinct technology (e.g. Terragrunt environments, Terraform modules, a Python service, a Java service). Each such **component** gets its own patterns file at the repo root, named `patterns-<slug>.md`, where `<slug>` is derived from the component's `langs` list: lowercase, join entries with dashes, replace any remaining non-alphanumeric characters with dashes. Example: `langs = ["Terraform", "Terragrunt"]` → `patterns-terraform-terragrunt.md`.
+
+A repo created with an older version of this skill may have a single legacy `patterns.md` (no suffix) at the repo root. Treat it as just another component's patterns file: identify its `langs` from its H1 as usual. Do not rename it.
+
+Every subskill below that needs to find "the patterns file(s)" means: every file at the repo root matching `patterns-*.md`, plus a legacy `patterns.md` if present.
 
 ---
 
 ## research-create subskill
 
-This subskill is for creating a new `patterns.md`.
+This subskill is for creating one or more new `patterns-<slug>.md` files at the repo root, one per component.
 
 Process:
 
-1. The arguments to this subskill are names of languages/frameworks to research. Call this argument list `langs`.
-2.
-  - If this is an interactive session, ask the user where they want to store the file. Give options:
-    - Repo root (default)
-    - Other directory: ask for input from the user
-  - If this is a non-interactive or headless session, set the location of the new file to the repo root.
-3. Create a [temporary file](#tmpfile).
-4. Create a search string by concatenating all entries in `langs` space-separated, then appending "_software design patterns anti-patterns best practices_"
-5. Search the internet using the search string.
-6. For each of the top search results (up to a maximum of 10), follow the [webpage subprocess](#webpage-subprocess). For the first result, pass `N=0`. Record the number returned by the subprocess, and pass this updated number as `N` to the next webpage subprocess call.
-7. Create in-memory deduplicated lists of patterns and anti-patterns, merging descriptions per the [deduplication](#dedup-pattern) rules and retaining all footnotes.
-8. Using lists created in the previous step, along with [the template](#template), create a new `patterns.md` in the location from step 2.
-   - Update the H1 heading to replace "LANGUAGENAME" with the languages/frameworks that have been researched
-   - Remove sample/dummy patterns, anti-patterns
-   - Add a list of patterns under the H2 heading "Patterns to Follow"
-   - Add a list of anti-patterns under the H2 heading "Anti-patterns to Avoid"
-9. When finished, delete the temporary file.
+1. If `args` is non-empty, there is exactly one component to research: its `langs` is `args`. Skip to step 3.
+2. If `args` is empty, run the [component detection subprocess](#component-detection) to propose a list of components (each with a `name` and `langs`). Present the proposed list to the user and ask them to confirm, remove, merge, rename, or add components before proceeding. Use the confirmed list as the component list for the remaining steps.
+3. For each component in the component list, independently perform steps 4–11:
+4. Compute the target filename `patterns-<slug>.md` per the [multi-component model](#multi-component-model).
+5. If a file already exists at that path:
+   - Tell the user it already exists and ask whether to: overwrite it, skip this component, or update it instead (in which case, run the [research-update subskill](#research-update-subskill) process for just this one file, then move to the next component).
+   - If the user chooses skip, move to the next component.
+6.
+   - If this is an interactive session and the user has not already been asked, ask where new patterns files should be stored. Give options:
+     - Repo root (default)
+     - Other directory: ask for input from the user
+   - If this is a non-interactive/headless session, use the repo root.
+7. Create a [temporary file](#tmpfile).
+8. Create a search string by concatenating all entries in this component's `langs` space-separated, then appending "_software design patterns anti-patterns best practices_"
+9. Search the internet using the search string.
+10. For each of the top search results (up to a maximum of 10), follow the [webpage subprocess](#webpage-subprocess). For the first result, pass `N=0`. Record the number returned by the subprocess, and pass this updated number as `N` to the next webpage subprocess call.
+11. Create in-memory deduplicated lists of patterns and anti-patterns, merging descriptions per the [deduplication](#dedup-pattern) rules and retaining all footnotes. Using these lists, along with [the template](#template), create a new `patterns-<slug>.md` in the location from step 6.
+    - Update the H1 heading to replace "LANGUAGENAME" with this component's `langs`
+    - Remove sample/dummy patterns, anti-patterns
+    - Add a list of patterns under the H2 heading "Patterns to Follow"
+    - Add a list of anti-patterns under the H2 heading "Anti-patterns to Avoid"
+    - Delete the temporary file
+12. Once every component has been processed, give the user a summary: files created, files skipped, and files updated in place of creation.
 
 ## research-update subskill
 
-This subskill is for updating `patterns.md`, which may be at the repo root, or be elsewhere. This subskill takes no arguments.
+This subskill is for updating existing `patterns-*.md` file(s), which live at the repo root per the [multi-component model](#multi-component-model). This subskill takes optional arguments naming which components to update.
 
 Process:
 
-1. Search the repo for a file named `patterns.md`. If it cannot be found, ask the user for its location. If it still cannot be found, then stop.
-2. Read `patterns.md` and identify from the H1 heading the languages/frameworks being used. If no languages can be identified from the H1, ask the user. Call the list of languages/frameworks `langs`. Record the highest numbered footnote number, call it `N`. If no footnotes are found, set `N=0`.
-3. Create a [temporary file](#tmpfile).
-4. Create a search string by concatenating all entries in `langs` space-separated, then appending "_software design patterns anti-patterns best practices_"
-5. Search the internet using the search string.
-6. For each of the top search results (up to a maximum of 10), follow the [webpage subprocess](#webpage-subprocess). For the first result, pass in `N` as found in step 2. Record the number returned by the subprocess, and pass this updated number as `N` to the next webpage subprocess call.
-7. Create in-memory deduplicated lists of patterns and anti-patterns: Merge the original content of `patterns.md` (read in step 2) with the new temporary file by:
+1. Find all patterns files at the repo root (see [multi-component model](#multi-component-model)). Call this list `pattern_files`. If none can be found, ask the user for their location(s). If still none can be found, then stop.
+2. If `args` is non-empty, filter `pattern_files` to only those whose filename slug or H1 `langs` case-insensitively match at least one entry in `args`. If the filtered list is empty, tell the user no matching patterns files were found and stop.
+3. For each file in the (filtered) list, independently perform steps 4–9:
+4. Read the file and identify from its H1 heading the languages/frameworks being used. If no languages can be identified from the H1, ask the user. Call the list of languages/frameworks `langs`. Record the highest numbered footnote number, call it `N`. If no footnotes are found, set `N=0`.
+5. Create a [temporary file](#tmpfile).
+6. Create a search string by concatenating all entries in `langs` space-separated, then appending "_software design patterns anti-patterns best practices_"
+7. Search the internet using the search string. For each of the top search results (up to a maximum of 10), follow the [webpage subprocess](#webpage-subprocess). For the first result, pass in `N` as found in step 4. Record the number returned by the subprocess, and pass this updated number as `N` to the next webpage subprocess call.
+8. Create in-memory deduplicated lists of patterns and anti-patterns: Merge the original content of this file (read in step 4) with the temporary file by:
    - [deduplicating](#dedup-pattern) and summarising: Patterns to Follow
    - [deduplicating](#dedup-pattern) and summarising: Anti-patterns to Avoid
    - keeping all footnote source citations, but moving any citation definitions that are not at the end of the file to the end of the file.
-8. Save the merged results to `patterns.md` in the same location as the file found in step 1. Do not write to the temporary file.
-9. When finished, delete the temporary file.
+9. Save the merged results back to this same file. Do not write to the temporary file. Delete the temporary file.
+10. Once every file has been processed, give the user a summary of which files were updated.
 
 ## analyse subskill
 
-This subskill reads the codebase and checks if it needs improvements to better follow patterns and avoid anti-patterns.
+This subskill reads the codebase and checks if it needs improvements to better follow patterns and avoid anti-patterns, across every component's patterns file.
 
 Process:
 
-1. Search the repo for a file named `patterns.md`. If it cannot be found, ask the user for its location. If it still cannot be found, then stop.
-2. Read `patterns.md`. Identify the list of languages/frameworks to investigate from the H1 heading. Call this list `langs`. If no languages/frameworks can be found, then stop.
-3. Check the repo remote to see if [creating remote Issues](#remote-issues) is possible. Remember the state (`remote_authenticated` or `write_to_file`).
-4. Search the codebase for source files relevant to the languages in `langs`. Ignore:
+1. Find all patterns files at the repo root (see [multi-component model](#multi-component-model)). Call this list `pattern_files`. If none can be found, ask the user for their location(s). If still none can be found, then stop.
+2. For each file, read it and identify from its H1 heading the languages/frameworks to investigate (`langs`) and derive a component name/slug per the [multi-component model](#multi-component-model). If a file has no identifiable `langs`, warn the user and skip that file.
+3. Check the repo remote once to see if [creating remote Issues](#remote-issues) is possible. Remember the state (`remote_authenticated` or `write_to_file`); this applies to every component below.
+4. For each patterns file (with its own `langs` and component slug), independently perform steps 5–7:
+5. Search the codebase for source files relevant to this component's `langs`. Ignore:
    - build artefacts
-   - dependency directories (e.g. `node_modules`, `.dart_tool`, `build`, `target`, `__pycache__`), and generated files.
-5. Search the files identified in the previous step for:
+   - dependency directories (e.g. `node_modules`, `.dart_tool`, `build`, `target`, `__pycache__`, `.terraform`), and generated files.
+6. Search the files identified in the previous step for:
    - occurrences of **anti-patterns** that are being used
    - occurrences of **patterns** that are not being followed. For each pattern, identify what code would look like if the pattern were violated, then search for that.
-6. For each occurrence:
+7. For each occurrence:
    - Create an in-memory Issue consisting of:
-     - Title: a short (max 20 words) description of the problem (pattern not followed; anti-pattern being used)
+     - Title: a short (max 20 words) description of the problem (pattern not followed; anti-pattern being used), prefixed with this component's slug in square brackets, e.g. `[terraform] ...`, so issues from different components are distinguishable.
      - Description: a paragraph describing the problem, including:
        - the offending code snippet using triple-backticks (max 10 lines) and a language hint immediately after the opening triple-backticks
        - file reference (including full line range)
-       - name and description of the pattern/anti-pattern from `patterns.md`
+       - name and description of the pattern/anti-pattern, and which patterns file it came from
    - Check the state from step 3, and proceed as follows:
      - If `remote_authenticated`, then use a command (`gh` or `glab`) to create an Issue from the in-memory Issue.
      - If `write_to_file`, then append the in-memory Issue to `patterns-recommendations.md`.
-7. Give the user a summary of the Issues created, including:
+8. Give the user a summary of the Issues created, grouped by component, including:
    - If Github/Gitlab Issues were created, then include the Issue numbers
    - Issue Titles
+
+## <a name="component-detection"></a> Component detection subprocess
+
+This subprocess scans the repo for recognisable project markers and proposes a list of components (each a `name` and `langs`) for confirmation by the user. It is used by `research-create` when run with no arguments.
+
+Use `find`/`grep` to look for markers such as (this list is illustrative, not exhaustive — use judgement for markers not listed here):
+
+| Marker | Component | langs |
+|---|---|---|
+| `terragrunt.hcl` files | Terragrunt | `["Terragrunt"]` |
+| `*.tf` files (outside `.terraform/`) | Terraform | `["Terraform"]` |
+| `pyproject.toml`, `requirements*.txt`, `setup.py`, `Pipfile` | Python | `["Python"]` |
+| `pom.xml`, `build.gradle`, `build.gradle.kts` | Java | `["Java"]` |
+| `pubspec.yaml` | Dart/Flutter | `["Dart", "Flutter"]` |
+| `package.json` (with TypeScript config) | TypeScript | `["TypeScript"]` |
+| `package.json` (no TypeScript config) | JavaScript/Node | `["JavaScript", "Node.js"]` |
+| `go.mod` | Go | `["Go"]` |
+| `Gemfile` | Ruby | `["Ruby"]` |
+| `Cargo.toml` | Rust | `["Rust"]` |
+| `*.csproj`, `*.sln` | .NET | `["C#", ".NET"]` |
+
+Process:
+
+1. Search the repo (ignoring dependency/build directories such as `node_modules`, `.dart_tool`, `build`, `target`, `__pycache__`, `.terraform`, `vendor`) for the markers above and any other clearly identifiable project markers.
+2. Group findings into a proposed component list. Related but distinct tools (e.g. Terraform and Terragrunt) should normally be proposed as separate components unless there is reason to merge them (e.g. very few files of one kind).
+3. Present the proposed component list to the user, showing for each: the component name, its `langs`, and roughly how many matching files were found. Ask the user to confirm, or to remove/merge/rename/add components.
+4. Return the confirmed component list to the calling process.
 
 ## <a name="remote-issues"></a> Creating remote Issues
 
