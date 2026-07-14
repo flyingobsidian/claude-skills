@@ -9,8 +9,8 @@ metadata:
   version: "2.0"
 allowed-tools: >-
   Bash(git:*) Bash(grep:*) Bash(find:*) Bash(gh:*) Bash(glab:*)
-  Bash(mktemp:*) Bash(touch:*) Bash(cat:*) Bash(rm -f /tmp/*)
-  AskFollowupQuestion Read WebSearch WebFetch Write
+  Bash(mktemp:*) Bash(touch:*) Bash(cat:*) Bash(rm -f /tmp/patterns-*)
+  Read Write Edit WebSearch WebFetch
 ---
 
 # Subskills
@@ -23,7 +23,7 @@ If `args` is empty or there is no matching subskill, print an error "Subskill mi
 
 ## help subskill
 
-Print the following to the user verbatim:
+Print the subskill list below to the user as literal text. Do not reflow, re-render, summarise, or execute it; emit it exactly as written (the surrounding ```markdown fence is a delimiter, not part of the output):
 
 ```markdown
 - **help** to list subskills.
@@ -36,11 +36,20 @@ Print the following to the user verbatim:
 
 ## Multi-component model
 
-A repo may contain more than one distinct technology (e.g. Terragrunt environments, Terraform modules, a Python service, a Java service). Each such **component** gets its own patterns file at the repo root, named `patterns-<slug>.md`, where `<slug>` is derived from the component's `langs` list: lowercase, join entries with dashes, replace any remaining non-alphanumeric characters with dashes. Example: `langs = ["Terraform", "Terragrunt"]` → `patterns-terraform-terragrunt.md`.
+A repo may contain more than one distinct technology (e.g. Terragrunt environments, Terraform modules, a Python service, a Java service). Each such **component** gets its own patterns file at the repo root, named `patterns-<slug>.md`, where `<slug>` is derived from the component's `langs` list as follows:
+1. Lowercase every entry and join the entries with dashes.
+2. Replace any remaining non-alphanumeric character with a dash.
+3. Collapse any run of consecutive dashes into a single dash, and strip any leading or trailing dash.
+
+Examples: `["Terraform", "Terragrunt"]` → `patterns-terraform-terragrunt.md`; `["C#", ".NET"]` → `patterns-c-net.md`.
+
+If two components would resolve to the same slug, disambiguate by appending `-2`, `-3`, … to the later slug(s) (or ask the user for a distinguishing name in an interactive session) so no patterns file is silently overwritten by another component.
 
 A repo created with an older version of this skill may have a single legacy `patterns.md` (no suffix) at the repo root. Treat it as just another component's patterns file: identify its `langs` from its H1 as usual. Do not rename it.
 
 Every subskill below that needs to find "the patterns file(s)" means: every file at the repo root matching `patterns-*.md`, plus a legacy `patterns.md` if present.
+
+Only the `research-create` subskill discovers components from source (via the [component detection subprocess](#component-detection)). `research-update` and `analyse` deliberately do **not** scan source for new components; they operate solely on the patterns files that already exist at the repo root. To add coverage for a newly introduced component, run `research-create` first, then `research-update`/`analyse` will pick up the new file.
 
 ---
 
@@ -52,12 +61,12 @@ Process:
 
 1. If `args` is non-empty, there is exactly one component to research: its `langs` is `args`. Skip to step 3.
 2. If `args` is empty, run the [component detection subprocess](#component-detection) to propose a list of components (each with a `name` and `langs`). Present the proposed list to the user and ask them to confirm, remove, merge, rename, or add components before proceeding. Use the confirmed list as the component list for the remaining steps.
-3. For each component in the component list, independently perform steps 4–11:
+3. For each component in the component list, independently perform steps 4–12:
 4. Compute the target filename `patterns-<slug>.md` per the [multi-component model](#multi-component-model).
 5. If a file already exists at that path:
    - Tell the user it already exists and ask whether to: overwrite it, skip this component, or update it instead (in which case, run the [research-update subskill](#research-update-subskill) process for just this one file, then move to the next component).
    - If the user chooses skip, move to the next component.
-6.
+6. Decide where this component's patterns file will be stored:
    - If this is an interactive session and the user has not already been asked, ask where new patterns files should be stored. Give options:
      - Repo root (default)
      - Other directory: ask for input from the user
@@ -65,14 +74,14 @@ Process:
 7. Create a [temporary file](#tmpfile).
 8. Create a search string by concatenating all entries in this component's `langs` space-separated, then appending "_software design patterns anti-patterns best practices_"
 9. Search the internet using the search string.
-10. For each of the top search results (up to a maximum of 10), follow the [webpage subprocess](#webpage-subprocess). For the first result, pass `N=0`. Record the number returned by the subprocess, and pass this updated number as `N` to the next webpage subprocess call.
-11. Create in-memory deduplicated lists of patterns and anti-patterns, merging descriptions per the [deduplication](#dedup-pattern) rules and retaining all footnotes. Using these lists, along with [the template](#template), create a new `patterns-<slug>.md` in the location from step 6.
+10. For each of the top search results (up to a maximum of 10), follow the [webpage subprocess](#webpage-subprocess). For the first result, pass `N=0`. Record the number returned by the subprocess, and pass this updated number as `N` to the next webpage subprocess call. Maintain a set of URLs already visited (both search results and links followed inside the subprocess) and skip any result whose URL is already in the set, so the same page is never fetched twice.
+11. Read the temporary file and create deduplicated lists of patterns and anti-patterns, merging descriptions per the [deduplication](#dedup-pattern) rules and retaining all footnotes. Using these lists, along with [the template](#template), create a new `patterns-<slug>.md` in the location from step 6.
     - Update the H1 heading to replace "LANGUAGENAME" with this component's `langs`
     - Remove sample/dummy patterns, anti-patterns
     - Add a list of patterns under the H2 heading "Patterns to Follow"
     - Add a list of anti-patterns under the H2 heading "Anti-patterns to Avoid"
-    - Delete the temporary file
-12. Once every component has been processed, give the user a summary: files created, files skipped, and files updated in place of creation.
+12. Delete the temporary file created in step 7.
+13. Once every component has been processed, give the user a summary: files created, files skipped, and files updated in place of creation.
 
 ## research-update subskill
 
@@ -86,8 +95,8 @@ Process:
 4. Read the file and identify from its H1 heading the languages/frameworks being used. If no languages can be identified from the H1, ask the user. Call the list of languages/frameworks `langs`. Record the highest numbered footnote number, call it `N`. If no footnotes are found, set `N=0`.
 5. Create a [temporary file](#tmpfile).
 6. Create a search string by concatenating all entries in `langs` space-separated, then appending "_software design patterns anti-patterns best practices_"
-7. Search the internet using the search string. For each of the top search results (up to a maximum of 10), follow the [webpage subprocess](#webpage-subprocess). For the first result, pass in `N` as found in step 4. Record the number returned by the subprocess, and pass this updated number as `N` to the next webpage subprocess call.
-8. Create in-memory deduplicated lists of patterns and anti-patterns: Merge the original content of this file (read in step 4) with the temporary file by:
+7. Search the internet using the search string. For each of the top search results (up to a maximum of 10), follow the [webpage subprocess](#webpage-subprocess). For the first result, pass in `N` as found in step 4. Record the number returned by the subprocess, and pass this updated number as `N` to the next webpage subprocess call. Maintain a set of URLs already visited (both search results and links followed inside the subprocess) and skip any result whose URL is already in the set, so the same page is never fetched twice.
+8. Read the temporary file, then create deduplicated lists of patterns and anti-patterns by merging its content with the original content of this file (read in step 4):
    - [deduplicating](#dedup-pattern) and summarising: Patterns to Follow
    - [deduplicating](#dedup-pattern) and summarising: Anti-patterns to Avoid
    - keeping all footnote source citations, but moving any citation definitions that are not at the end of the file to the end of the file.
@@ -109,7 +118,7 @@ Process:
    - dependency directories (e.g. `node_modules`, `.dart_tool`, `build`, `target`, `__pycache__`, `.terraform`), and generated files.
 6. Search the files identified in the previous step for:
    - occurrences of **anti-patterns** that are being used
-   - occurrences of **patterns** that are not being followed. For each pattern, identify what code would look like if the pattern were violated, then search for that.
+   - occurrences of **patterns** that are not being followed. A pattern describes what code *should* do, so you cannot search for it directly. Instead, for each pattern, describe the concrete code shape that appears when the pattern is ignored, and search for that shape. Examples: for "every public function has a doc comment", find public function declarations and flag those with no preceding doc comment; for "use parameterised queries", search for string-concatenated SQL. If a pattern's violation cannot be expressed as a searchable code shape, record it as unverified and move on rather than guessing.
 7. For each occurrence:
    - Create an in-memory Issue consisting of:
      - Title: a short (max 20 words) description of the problem (pattern not followed; anti-pattern being used), prefixed with this component's slug in square brackets, e.g. `[terraform] ...`, so issues from different components are distinguishable.
@@ -160,7 +169,7 @@ If the repo has a remote that is Github or Gitlab then:
    - use `gh` for Github
    - use `glab` for Gitlab
 2. Check if the user is authenticated by using the `auth status` subcommand. If the user is authenticated, remember the state as `remote_authenticated`. Stop here, and return to the calling process.
-3. Use the `auth login` subcommand to log in. If login succeeds, remember the state as `remote_authenticated`, stop here, and return to the calling process. If login failed, or if the user declined, continue.
+3. In a non-interactive/headless session, do not attempt `auth login`: it is interactive and will hang. Treat the repo as not authenticated and continue. Otherwise, use the `auth login` subcommand to log in. If login succeeds, remember the state as `remote_authenticated`, stop here, and return to the calling process. If login failed, or if the user declined, continue.
 
 If the repo does not have a remote that is Github or Gitlab, or if it was not allowed/possible to log in, then remember that creating remote Issues is not possible. Instead, be prepared to write Issues to a file `patterns-recommendations.md` in the repo root.
 
@@ -176,7 +185,7 @@ This subprocess takes an argument `N` which is the highest known footnote number
 
 - Fetch and read the content of the webpage.
 - Identify patterns and anti-patterns on the webpage.
-- Append them all to the temporary file created at the start of the main process.
+- Append them all to the temporary file created at the start of the main process. The temporary file is the accumulator that carries state between calls to this subprocess, so appending must preserve everything already in it. There is no append tool, so append by one of: reading the current file with Read and rewriting it with Write as (existing content + new block); or using Edit to add the new block at the end. Never overwrite the file with only the new block.
   - Patterns go in a list of patterns.
   - Anti-patterns go in a list of anti-patterns.
   - Each pattern/anti-pattern should include a footnote [citation](#citations) to the source webpage.
@@ -226,16 +235,14 @@ When instructed to create a temporary file, use this shell script to generate th
 
 ```sh
 #!/usr/bin/env bash
+# Print the path of a fresh temporary file. Uses only mktemp and touch
+# (both allow-listed); falls back to a PID-based name if mktemp is absent.
 
-if command -v mktemp 1>/dev/null ; then
-  mktemp /tmp/patterns-XXXXXXXX.md
-elif command -v date 1>/dev/null ; then
-  f="/tmp/patterns-$(date '+%Y%m%d-%H%M%S').md"
-  echo "$f"
-  touch "$f"
+if mktemp /tmp/patterns-XXXXXXXX.md 2>/dev/null ; then
+  : # mktemp already printed the path on success
 else
-  echo "Failed to find mktemp or date."
-  exit 1
+  f="/tmp/patterns-$$.md"
+  touch "$f" && printf '%s\n' "$f"
 fi
 ```
 
